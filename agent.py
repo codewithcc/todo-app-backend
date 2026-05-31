@@ -2,6 +2,8 @@ from pydantic import BaseModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
+from langchain.tools import tool
+from langchain_core.messages import HumanMessage
 
 
 # 🔹 Load environment variables
@@ -13,13 +15,54 @@ class SmartTodo(BaseModel):
     title: str
     date: str
     priority: str
+    needs_email: bool
 
 
 # 🔹 Google Generative AI model
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
 
+
 # 🔹 Force structured output
 structured_llm = llm.with_structured_output(SmartTodo)
+
+#an email tool
+@tool
+def send_email(receiver: str, title: str, body: str):
+    """
+    Mock email sender.
+    """
+
+    message = (
+        f"An email with '{title}' "
+        f"and '{body}' "
+        f"is sent to {receiver}"
+    )
+
+    print("\n📧 EMAIL TOOL CALLED")
+    print(message)
+
+    return message
+
+#email tool bound llm
+email_llm = llm.bind_tools([send_email])
+
+def handle_email_request(user_text: str):
+
+    response = email_llm.invoke(
+        [HumanMessage(content=user_text)]
+    )
+
+    if response.tool_calls:
+
+        for tool_call in response.tool_calls:
+
+            if tool_call["name"] == "send_email":
+
+                send_email.invoke(tool_call["args"])
+
+                return "Email tool executed."
+
+    return response.content
 
 
 # 🔹 Prompt Template with examples
@@ -45,6 +88,7 @@ You must extract:
 - title
 - date
 - priority
+- needs_email
 
 Rules:
 
@@ -78,78 +122,27 @@ If impossible to determine, return null.
 8. Do not add explanations.
 
 9. Understand both English and Bengali mixed language naturally.
+     
+10. Determine if the task requires an email reminder.
 
-Examples:
+Set needs_email:
 
-Input:
-"Friday te 12pm e internal ache computer architect er, high priority"
+- true:
+  meetings
+  client calls
+  interviews
+  professional discussions
+  project reviews
+  important office events
 
-Output:
-{{
-    "title": "Computer Architecture Internal",
-    "date": "Friday 12 PM",
-    "priority": "high"
-}}
+- false:
+  personal tasks
+  shopping
+  movies
+  hangouts
+  hobbies
+  entertainment
 
-Input:
-"Group meeting tomorrow at 2 PM, medium priority"
-
-Output:
-{{
-    "title": "Group meeting",
-    "date": "Tomorrow 2 PM",
-    "priority": "medium"
-}}
-
-Input:
-"Doctor appointment tomorrow at 5 PM"
-
-Output:
-{{
-    "title": "Doctor appointment",
-    "date": "Tomorrow 5 PM",
-    "priority": "medium"
-}}
-
-Input:
-"Aj rat 9tay assignment complete korte hobe, priority high"
-
-Output:
-{{
-    "title": "Complete assignment",
-    "date": "Tonight 9 PM",
-    "priority": "high"
-}}
-
-Input:
-"Aj ami bondhu der sathe movie dekhbo"
-
-Output:
-{{
-    "title": "Watch movie with friends",
-    "date": "Tonight",
-    "priority": "low"
-}}
-
-Input:
-"Saturday ami amr friends sthe ghurte jbo"
-
-Output:
-{{
-    "title": "Hangout with friends",
-    "date": "Saturday",
-    "priority": "low"
-}}
-
-Input:
-"Kal final project submit korte hobe"
-
-Output:
-{{
-    "title": "Final project submission",
-    "date": "Tomorrow",
-    "priority": "high"
-}}
 
 """),
 
@@ -165,9 +158,7 @@ def extract_todo(user_text: str):
         input=user_text
     )
 
-    result = structured_llm.invoke(formatted_prompt)
-
-    return result
+    return structured_llm.invoke(formatted_prompt)
 
 
 # 🔹 Test the AI
@@ -186,6 +177,31 @@ if __name__ == "__main__":
 
         result = extract_todo(user_text)
 
-        print("\n--- AI OUTPUT ---")
+        print("\n--- TODO OUTPUT ---")
         print(result)
+
+        if result.needs_email:
+
+            print(
+                "\n🤖 AI thinks this task may require "
+                "an email reminder."
+            )
+
+            email = input(
+                "📧 Enter receiver email "
+                "(leave blank to skip): "
+            )
+
+            if email.strip():
+
+                send_email.invoke({
+                    "receiver": email,
+                    "title": result.title,
+                    "body": (
+                        f"Reminder: "
+                        f"{result.title} "
+                        f"on {result.date}"
+                    )
+                })
+
         print()
